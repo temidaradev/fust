@@ -16,10 +16,11 @@ fn get_os_info() -> Option<String> {
 
     for line in reader.lines() {
         if let Ok(l) = line
-            && l.starts_with("PRETTY_NAME=") {
-                let name = l.replace("PRETTY_NAME=", "").replace("\"", "");
-                return Some(name);
-            }
+            && l.starts_with("PRETTY_NAME=")
+        {
+            let name = l.replace("PRETTY_NAME=", "").replace("\"", "");
+            return Some(name);
+        }
     }
     None
 }
