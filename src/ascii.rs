@@ -34,15 +34,13 @@ pub fn colorize(raw: &str) -> String {
     let mut out = String::with_capacity(raw.len());
     let mut chars = raw.chars().peekable();
     while let Some(c) = chars.next() {
-        if c == '$' {
-            if let Some(&next) = chars.peek() {
-                if let Some(idx) = next.to_digit(10) {
+        if c == '$'
+            && let Some(&next) = chars.peek()
+                && let Some(idx) = next.to_digit(10) {
                     chars.next();
                     out.push_str(COLORS[idx as usize]);
                     continue;
                 }
-            }
-        }
         out.push(c);
     }
     out.push_str(RESET);

@@ -1,7 +1,7 @@
 use crate::ascii::{colorize, get_ascii_art, visible_width};
 use std::fs;
 use std::process::Command;
-use std::io::{BufWriter, Write};
+use std::io::BufWriter;
 use std::io::StdoutLock;
 
 
@@ -57,7 +57,7 @@ fn get_os_info() -> Option<String> {
         .strip_prefix("PRETTY_NAME=")?
         .trim_matches('"')
         .to_string();
-    Some(label("OS", &name))
+    Some(label("\u{f17c} OS", &name))
 }
 
 fn get_cpu_info() -> Option<String> {
@@ -69,7 +69,7 @@ fn get_cpu_info() -> Option<String> {
         .nth(1)?
         .trim()
         .to_string();
-    Some(label("CPU", &model))
+    Some(label("\u{f2db} CPU", &model))
 }
 
 fn get_gpu_info() -> Option<String> {
@@ -94,7 +94,7 @@ fn get_gpu_info() -> Option<String> {
 
     Some(
         gpus.iter()
-            .map(|gpu| label("GPU", gpu))
+            .map(|gpu| label("\u{f26c} GPU", gpu))
             .collect::<Vec<_>>()
             .join("\n"),
     )
@@ -123,9 +123,9 @@ fn get_mem_info() -> Option<String> {
     let gib = |kb: f64| kb / 1_048_576.0;
 
     Some(label(
-        "Memory",
+        "\u{f233} Memory",
         &format!(
-            "{:.2} / {:.2} GiB\n{BLUE}Swap:{RESET}   {:.2} / {:.2} GiB",
+            "{:.2} / {:.2} GiB\n{BLUE}\u{f0ec} Swap:{RESET} {:.2} / {:.2} GiB",
             gib(mem_used),
             gib(mem_total),
             gib(swap_used),
@@ -141,11 +141,11 @@ fn get_uptime_info() -> Option<String> {
         .next()?
         .parse::<f64>()
         .ok()?;
-    Some(label("Uptime", &format!("{:.2} hours", seconds / 3600.0)))
+    Some(label("\u{f017} Uptime", &format!("{:.2} hours", seconds / 3600.0)))
 }
 
 fn get_shell_info() -> Option<String> {
-    Some(label("Shell", &std::env::var("SHELL").ok()?))
+    Some(label("\u{f120} Shell", &std::env::var("SHELL").ok()?))
 }
 
 fn get_disk_info() -> Option<String> {
@@ -162,25 +162,25 @@ fn get_disk_info() -> Option<String> {
     let used  = total - avail;
 
     Some(label(
-        "Disk",
+        "\u{f0a0} Disk",
         &format!("{:.2} / {:.2} GiB", gib(used), gib(total)),
     ))
 }
 
-pub fn show_info(out: &mut BufWriter<StdoutLock>) {
+pub fn show_info(_out: &mut BufWriter<StdoutLock>) {
     let distro = detect_distro();
     let colored_art = colorize(get_ascii_art(&distro));
     let art: Vec<&str> = colored_art.lines().collect();
     let mut infos: Vec<String> = Vec::new();
 
     if let Ok(h) = fs::read_to_string("/etc/hostname") {
-        infos.push(label("Host", h.trim()));
+        infos.push(label("\u{f108} Host", h.trim()));
     }
     if let Ok(k) = fs::read_to_string("/proc/sys/kernel/osrelease") {
-        infos.push(label("Kernel", &format!("Linux {}", k.trim())));
+        infos.push(label("\u{f17c} Kernel", &format!("Linux {}", k.trim())));
     }
 
-    for info in [
+    for line in [
         get_os_info(),
         get_uptime_info(),
         get_shell_info(),
@@ -188,11 +188,9 @@ pub fn show_info(out: &mut BufWriter<StdoutLock>) {
         get_gpu_info(),
         get_mem_info(),
         get_disk_info(),
-    ] {
-        if let Some(line) = info {
-            for sub in line.lines() {
-                infos.push(sub.to_string());
-            }
+    ].into_iter().flatten() {
+        for sub in line.lines() {
+            infos.push(sub.to_string());
         }
     }
 
