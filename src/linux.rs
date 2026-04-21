@@ -1,43 +1,109 @@
-use std::fs::{self, File};
-use std::io::{BufRead, BufReader};
+use crate::ascii::{colorize, get_ascii_art, visible_width};
+use std::fs;
 use std::process::Command;
 
-fn get_os_info() -> Option<String> {
-    let file = File::open("/etc/os-release").ok()?;
-    let reader = BufReader::new(file);
+const BLUE: &str = "\x1b[34m";
+const RESET: &str = "\x1b[0m";
 
-    for line in reader.lines() {
-        if let Ok(l) = line
-            && l.starts_with("PRETTY_NAME=")
-        {
-            let name = l.replace("PRETTY_NAME=", "").replace("\"", "");
-            return Some(name);
-        }
+pub enum Distro {
+    Arch,
+    Alpine,
+    Asahi,
+    CachyOS,
+    Endeavour,
+    Ubuntu,
+    Debian,
+    Fedora,
+    NixOS,
+    Unknown,
+}
+
+fn label(key: &str, value: &str) -> String {
+    format!("{BLUE}{key}:{RESET} {value}")
+}
+
+fn detect_distro() -> Distro {
+    let content = fs::read_to_string("/etc/os-release").unwrap_or_default();
+    let id = content
+        .lines()
+        .find(|l| l.starts_with("ID="))
+        .and_then(|l| l.split('=').nth(1))
+        .unwrap_or("")
+        .trim_matches('"')
+        .to_lowercase();
+
+    match id.as_str() {
+        "arch" => Distro::Arch,
+        "alpine" => Distro::Alpine,
+        "asahi" => Distro::Asahi,
+        "cachyos" => Distro::CachyOS,
+        "endeavouros" => Distro::Endeavour,
+        "ubuntu" => Distro::Ubuntu,
+        "debian" => Distro::Debian,
+        "fedora" => Distro::Fedora,
+        "nixos" => Distro::NixOS,
+        _ => Distro::Unknown,
     }
-    None
+}
+
+fn get_os_info() -> Option<String> {
+    let content = fs::read_to_string("/etc/os-release").ok()?;
+    let name = content
+        .lines()
+        .find(|l| l.starts_with("PRETTY_NAME="))?
+        .strip_prefix("PRETTY_NAME=")?
+        .trim_matches('"')
+        .to_string();
+    Some(label("OS", &name))
 }
 
 fn get_cpu_info() -> Option<String> {
-    let file = std::fs::read_to_string("/proc/cpuinfo").ok()?;
-
-    let mut model = None;
-
-    for line in file.lines() {
-        if line.starts_with("model name") && model.is_none() {
-            model = line.split(':').nth(1).map(|s| s.trim().to_string());
-        }
-    }
-
-    Some(format!("{}", model.unwrap_or("Unknown".into()),))
+    let content = fs::read_to_string("/proc/cpuinfo").ok()?;
+    let model = content
+        .lines()
+        .find(|l| l.starts_with("model name"))?
+        .split(':')
+        .nth(1)?
+        .trim()
+        .to_string();
+    Some(label("CPU", &model))
 }
 
+fn get_gpu_info() -> Option<String> {
+    let output = Command::new("lspci").arg("-mm").output().ok()?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    let gpus: Vec<String> = stdout
+        .lines()
+        .filter(|l| l.contains("VGA") || l.contains("3D controller") || l.contains("Display"))
+        .filter_map(|l| {
+            let parts: Vec<&str> = l.split('"').collect();
+            let vendor = parts.get(3)?.trim();
+            let device = parts.get(5)?.trim();
+            Some(format!("{} {}", vendor, device))
+        })
+        .collect();
+
+    if gpus.is_empty() {
+        return None;
+    }
+
+    Some(
+        gpus.iter()
+            .map(|gpu| label("GPU", gpu))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+}
 
 fn get_mem_info() -> Option<String> {
-    let file = std::fs::read_to_string("/proc/meminfo").ok()?;
+    let content = fs::read_to_string("/proc/meminfo").ok()?;
 
     let parse_kb = |prefix: &str| -> Option<f64> {
-        file.lines()
-            .find(|line| line.starts_with(prefix))?
+        content
+            .lines()
+            .find(|l| l.starts_with(prefix))?
             .split(':')
             .nth(1)?
             .split_whitespace()
@@ -46,57 +112,74 @@ fn get_mem_info() -> Option<String> {
             .ok()
     };
 
-    let mem_total  = parse_kb("MemTotal:")?;
-    let mem_free   = parse_kb("MemFree:")?;
-    let buffers    = parse_kb("Buffers:")?;
-    let cached     = parse_kb("Cached:")?;
+    let mem_total = parse_kb("MemTotal:")?;
+    let mem_used = mem_total - parse_kb("MemFree:")? - parse_kb("Buffers:")? - parse_kb("Cached:")?;
+    let swap_total = parse_kb("SwapTotal:")?;
+    let swap_used = swap_total - parse_kb("SwapFree:")?;
 
-    let mem_used = mem_total - mem_free - buffers - cached;
+    let gib = |kb: f64| kb / 1_048_576.0;
 
-    let to_gib = |kb: f64| kb / 1_048_576.0;
-
-    Some(format!(
-        "{:.2} GiB / {:.2} GiB",
-        to_gib(mem_used),
-        to_gib(mem_total)
+    Some(label(
+        "Memory",
+        &format!(
+            "{:.2} / {:.2} GiB\n{BLUE}Swap:{RESET}   {:.2} / {:.2} GiB",
+            gib(mem_used),
+            gib(mem_total),
+            gib(swap_used),
+            gib(swap_total),
+        ),
     ))
 }
 
 fn get_uptime_info() -> Option<String> {
-    let seconds = fs::read_to_string("/proc/uptime").ok()?
+    let seconds = fs::read_to_string("/proc/uptime")
+        .ok()?
         .split_whitespace()
         .next()?
-        .parse::<f64>().ok()?;
-
-    let hours = seconds / 3600.0;
-    Some(format!("{:.2} hours", hours))
+        .parse::<f64>()
+        .ok()?;
+    Some(label("Uptime", &format!("{:.2} hours", seconds / 3600.0)))
 }
 
-
 fn get_shell_info() -> Option<String> {
-    std::env::var("SHELL").ok()
+    Some(label("Shell", &std::env::var("SHELL").ok()?))
 }
 
 pub fn show_info() {
-    if let Ok(os) = fs::read_to_string("/etc/hostname") {
-        println!("\x1b[34mHost:\x1b[0m {}", os.trim());
+    let distro = detect_distro();
+    let colored_art = colorize(get_ascii_art(&distro));
+    let art: Vec<&str> = colored_art.lines().collect();
+    let mut infos: Vec<String> = Vec::new();
+
+    if let Ok(h) = fs::read_to_string("/etc/hostname") {
+        infos.push(label("Host", h.trim()));
     }
-    if let Ok(kernel) = fs::read_to_string("/proc/sys/kernel/osrelease") {
-        println!("\x1b[34mKernel:\x1b[0m Linux {}", kernel.trim());
+    if let Ok(k) = fs::read_to_string("/proc/sys/kernel/osrelease") {
+        infos.push(label("Kernel", &format!("Linux {}", k.trim())));
     }
-    if let Some(up) = get_uptime_info() {
-        println!("\x1b[34mUptime:\x1b[0m {}", up);
+
+    for info in [
+        get_os_info(),
+        get_uptime_info(),
+        get_shell_info(),
+        get_cpu_info(),
+        get_gpu_info(),
+        get_mem_info(),
+    ] {
+        if let Some(line) = info {
+            for sub in line.lines() {
+                infos.push(sub.to_string());
+            }
+        }
     }
-    if let Some(sh) = get_shell_info() {
-        println!("\x1b[34mShell:\x1b[0m {}", sh);
-    }
-    if let Some(os) = get_os_info() {
-        println!("\x1b[34mOS:\x1b[0m {}", os);
-    }
-    if let Some(cpu) = get_cpu_info() {
-        println!("\x1b[34mCPU:\x1b[0m {}", cpu);
-    }
-    if let Some(mem) = get_mem_info() {
-        println!("\x1b[34mMemory:\x1b[0m {}", mem);
+
+    let art_width = art.iter().map(|l| visible_width(l)).max().unwrap_or(0);
+    let max_lines = art.len().max(infos.len());
+
+    for i in 0..max_lines {
+        let art_line = art.get(i).copied().unwrap_or("");
+        let info_line = infos.get(i).map(|s| s.as_str()).unwrap_or("");
+        let pad = art_width.saturating_sub(visible_width(art_line));
+        println!("{}{}  {}", art_line, " ".repeat(pad), info_line);
     }
 }
